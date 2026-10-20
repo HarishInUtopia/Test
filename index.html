@@ -1,1 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cutout – Free Background Remover</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--tx:#1b1b1f;--mu:#6b6b76;--ac:#5b5bf0;--acx:#fff;--bd:#e2e0da;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141416;--card:#1e1e22;--tx:#f0f0f3;--mu:#9a9aa6;--ac:#8b8bff;--acx:#101014;--bd:#33333a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:920px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:26px;margin:0 0 4px;letter-spacing:-.02em}
+.sub{color:var(--mu);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:14px;margin-top:12px}
+#drop{border:2px dashed var(--bd);border-radius:16px;padding:52px 16px;text-align:center;cursor:pointer;background:var(--card)}
+#drop.over{border-color:var(--ac)}
+#drop b{display:block;font-size:18px;margin-bottom:4px}
+#drop span{color:var(--mu);font-size:14px}
+button,select{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:10px;padding:9px 13px;cursor:pointer}
+button.on,button.pri{background:var(--ac);color:var(--acx);border-color:var(--ac)}
+button.big{width:100%;padding:15px;font-size:18px;font-weight:600;border-radius:14px}
+button:disabled{opacity:.5;cursor:default}
+#stage{position:relative;margin:14px 0;border-radius:14px;overflow:hidden;border:1px solid var(--bd);line-height:0;touch-action:none;
+background-color:#fff;background-image:linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%);background-size:20px 20px;background-position:0 0,10px 10px}
+#stage.white{background:#fff}#stage.black{background:#000}#stage.custom{background:var(--cb)}
+canvas{width:100%;height:auto;display:block;max-height:70vh;object-fit:contain;margin:0 auto}
+#busy{position:absolute;inset:0;background:rgba(0,0,0,.6);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;line-height:1.4;text-align:center;padding:20px}
+#bar{width:min(320px,80%);height:8px;background:rgba(255,255,255,.25);border-radius:99px;overflow:hidden}
+#bar i{display:block;height:100%;width:0;background:#fff;transition:width .2s}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+label{display:block;font-size:13px;color:var(--mu)}
+label output{float:right;color:var(--tx)}
+input[type=range]{width:100%;accent-color:var(--ac)}
+.sw{width:34px;height:34px;padding:0;border-radius:50%}
+input[type=color]{width:34px;height:34px;padding:0;border:1px solid var(--bd);border-radius:50%;background:none}
+.hint{font-size:13px;color:var(--mu);margin:8px 0 0}
+#msg{font-size:14px;margin:10px 0 0}
+#msg.err{color:#d33}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1>✂️ Cutout</h1>
+<p class="sub">Free background remover. Your images are processed in your browser and never uploaded.</p>
 
+<div id="drop"><b>Tap to choose an image</b><span>or drop one here · JPG, PNG, WebP</span>
+<input id="file" type="file" accept="image/*" hidden></div>
+
+<section id="app" class="hide">
+<button class="pri big" id="go">✨ Remove background</button>
+<div id="stage"><canvas id="cv"></canvas>
+<div id="busy" class="hide"><div id="busytxt"></div><div id="bar"><i></i></div></div></div>
+<p id="msg"></p>
+
+<div class="card">
+<div class="row">
+<label style="display:flex;gap:8px;align-items:center">Method
+<select id="method">
+<option value="ai">AI (best quality)</option>
+<option value="color">Colour-based (plain backgrounds)</option>
+</select></label>
+<label style="display:flex;gap:8px;align-items:center" id="qwrap">Quality
+<select id="model">
+<option value="isnet">Best</option>
+<option value="isnet_fp16" selected>Balanced</option>
+<option value="isnet_quint8">Fast</option>
+</select></label>
+</div>
+<div id="colopts" class="hide">
+<label>Colour tolerance<output id="vt">30</output><input id="tol" type="range" min="2" max="100" value="30"></label>
+<label>Edge softness<output id="vf">2</output><input id="feather" type="range" min="0" max="8" value="2"></label>
+<p class="hint">Change a slider, then tap “Remove background” again.</p>
+</div>
+</div>
+
+<div class="card">
+<div class="row">
+<button data-t="erase" class="on">Erase brush</button>
+<button data-t="restore">Restore brush</button>
+<button id="orig">Hold: original</button>
+</div>
+<label>Brush size<output id="vb">40</output><input id="bsize" type="range" min="4" max="200" value="40"></label>
+</div>
+
+<div class="row" style="margin-top:14px">
+<span style="font-size:13px;color:var(--mu)">Background:</span>
+<button class="sw" data-bg="" title="Transparent" style="background:repeating-conic-gradient(#ccc 0 25%,#fff 0 50%) 0 0/12px 12px"></button>
+<button class="sw" data-bg="white" title="White" style="background:#fff"></button>
+<button class="sw" data-bg="black" title="Black" style="background:#000"></button>
+<input type="color" id="cc" value="#ff7a59" title="Custom colour">
+</div>
+<div class="row">
+<button class="pri" id="dl" disabled>Download PNG</button>
+<button id="new">New image</button>
+</div>
+</section>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const cv=$('#cv'),ctx=cv.getContext('2d',{willReadFrequently:true});
+let W,H,orig,cur,tool='erase',bg='',name='image',showOrig=false,working=false,lib=null,hasResult=false;
+const MAX=3000;
+
+function busy(txt,pct){
+  $('#busy').classList.toggle('hide',txt===null);
+  if(txt!==null){$('#busytxt').textContent=txt;$('#bar i').style.width=(pct||0)+'%'}
+}
+function msg(t,err){const m=$('#msg');m.textContent=t||'';m.className=err?'err':''}
+
+async function load(file){
+  if(!file||!file.type.startsWith('image/')){msg('Please choose an image file.',true);return}
+  name=file.name.replace(/\.[^.]+$/,'')||'image';
+  let bmp;
+  try{bmp=await createImageBitmap(file)}catch(e){msg('Could not read that image.',true);return}
+  const s=Math.min(1,MAX/Math.max(bmp.width,bmp.height));
+  W=Math.round(bmp.width*s);H=Math.round(bmp.height*s);
+  cv.width=W;cv.height=H;
+  ctx.clearRect(0,0,W,H);ctx.drawImage(bmp,0,0,W,H);
+  orig=ctx.getImageData(0,0,W,H);
+  cur=new ImageData(new Uint8ClampedArray(orig.data),W,H);
+  hasResult=false;$('#dl').disabled=true;msg('');
+  $('#drop').classList.add('hide');$('#app').classList.remove('hide');
+}
+
+/* ---------- AI method ---------- */
+async function getLib(){
+  if(lib)return lib;
+  const urls=[
+    'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm',
+    'https://esm.sh/@imgly/background-removal@1.5.5'
+  ];
+  for(const u of urls){
+    try{const m=await import(u);if(m&&m.removeBackground){lib=m;return m}}catch(e){console.warn('import failed',u,e)}
+  }
+  throw new Error('AI library could not be loaded');
+}
+async function aiRemove(){
+  busy('Loading AI engine…',0);
+  const L=await getLib();
+  const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
+  tmp.getContext('2d').putImageData(orig,0,0);
+  const blob=await new Promise(r=>tmp.toBlob(r,'image/png'));
+  const run=L.removeBackground(blob,{
+    model:$('#model').value,
+    output:{format:'image/png'},
+    progress:(key,c,t)=>{
+      busy(String(key).startsWith('fetch')?'Downloading AI model (first time only)…':'Removing background…',t?c/t*100:0);
+    }
+  });
+  const res=await Promise.race([run,new Promise((_,rej)=>setTimeout(()=>rej(new Error('AI timed out')),240000))]);
+  const rb=await createImageBitmap(res);
+  const t2=document.createElement('canvas');t2.width=W;t2.height=H;
+  const c2=t2.getContext('2d',{willReadFrequently:true});c2.drawImage(rb,0,0,W,H);
+  cur=c2.getImageData(0,0,W,H);
+}
+
+/* ---------- Colour method (works anywhere, offline) ---------- */
+function box(a,r){
+  const t=new Uint8Array(a.length),o=new Uint8Array(a.length),n=2*r+1;
+  const cl=(v,m)=>v<0?0:v>m?m:v;
+  for(let y=0;y<H;y++){const b=y*W;let s=0;
+    for(let x=-r;x<=r;x++)s+=a[b+cl(x,W-1)];
+    for(let x=0;x<W;x++){t[b+x]=s/n;s+=a[b+cl(x+r+1,W-1)]-a[b+cl(x-r,W-1)]}}
+  for(let x=0;x<W;x++){let s=0;
+    for(let y=-r;y<=r;y++)s+=t[cl(y,H-1)*W+x];
+    for(let y=0;y<H;y++){o[y*W+x]=s/n;s+=t[cl(y+r+1,H-1)*W+x]-t[cl(y-r,H-1)*W+x]}}
+  return o;
+}
+function colourRemove(){
+  const d=orig.data,N=W*H;
+  const bins=new Map();
+  const add=i=>{const p=i*4,k=(d[p]>>4)<<8|(d[p+1]>>4)<<4|(d[p+2]>>4);
+    const e=bins.get(k)||[0,0,0,0];e[0]++;e[1]+=d[p];e[2]+=d[p+1];e[3]+=d[p+2];bins.set(k,e)};
+  const starts=[];
+  for(let x=0;x<W;x++){add(x);add((H-1)*W+x);starts.push(x,(H-1)*W+x)}
+  for(let y=0;y<H;y++){add(y*W);add(y*W+W-1);starts.push(y*W,y*W+W-1)}
+  let best=null;bins.forEach(e=>{if(!best||e[0]>best[0])best=e});
+  const c=[best[1]/best[0],best[2]/best[0],best[3]/best[0]];
+  const t2=($('#tol').value*2.5)**2,seen=new Uint8Array(N),st=[],removed=new Uint8Array(N);
+  const push=j=>{if(seen[j])return;const p=j*4,a=d[p]-c[0],b=d[p+1]-c[1],e=d[p+2]-c[2];
+    if(a*a+b*b+e*e<=t2){seen[j]=1;st.push(j)}};
+  starts.forEach(push);
+  while(st.length){const i=st.pop(),x=i%W;removed[i]=1;
+    if(x>0)push(i-1);if(x<W-1)push(i+1);if(i>=W)push(i-W);if(i<N-W)push(i+W)}
+  const f=+$('#feather').value;
+  let a=new Uint8Array(N);for(let i=0;i<N;i++)a[i]=removed[i]?0:255;
+  if(f>0){a=box(a,f);a=box(a,f)}
+  const g=f>0?1+(8-f)*.4:1;
+  cur=new ImageData(new Uint8ClampedArray(d),W,H);
+  for(let i=0;i<N;i++){const v=(a[i]/255-.5)*g+.5;cur.data[i*4+3]=v<=0?0:v>=1?255:v*255}
+}
+
+/* ---------- Main action ---------- */
+$('#go').onclick=async()=>{
+  if(working||!orig)return;
+  working=true;$('#go').disabled=true;msg('');
+  let used='';
+  try{
+    if($('#method').value==='ai'){
+      try{await aiRemove();used='ai'}
+      catch(e){
+        console.error(e);
+        busy('AI unavailable here, using colour method…',100);
+        await new Promise(r=>setTimeout(r,50));
+        colourRemove();used='fallback';
+      }
+    }else{
+      busy('Removing background…',50);
+      await new Promise(r=>setTimeout(r,30));
+      colourRemove();used='color';
+    }
+    hasResult=true;$('#dl').disabled=false;render();
+    if(used==='fallback')msg('The AI model could not load in this environment (it needs to be hosted on https with internet access), so the colour-based method was used. It works best on plain backgrounds.',true);
+    else if(used==='ai')msg('Done. Use the brushes to touch up edges, then download.');
+    else msg('Done. Adjust the sliders and tap again, or touch up with the brushes.');
+  }catch(e){console.error(e);msg('Something went wrong: '+e.message,true)}
+  busy(null);working=false;$('#go').disabled=false;
+};
+
+/* ---------- Rendering & brushes ---------- */
+function render(x0=0,y0=0,x1=W,y1=H){
+  x0=Math.max(0,x0|0);y0=Math.max(0,y0|0);x1=Math.min(W,Math.ceil(x1));y1=Math.min(H,Math.ceil(y1));
+  ctx.putImageData(showOrig?orig:cur,0,0,x0,y0,x1-x0,y1-y0);
+}
+function pos(e){
+  const r=cv.getBoundingClientRect(),s=Math.min(r.width/W,r.height/H);
+  return [(e.clientX-r.left-(r.width-W*s)/2)/s,(e.clientY-r.top-(r.height-H*s)/2)/s,s];
+}
+function brush(x,y,s){
+  const R=$('#bsize').value/2/s,d=cur.data,o=orig.data;
+  const x0=Math.max(0,Math.floor(x-R)),x1=Math.min(W,Math.ceil(x+R)),y0=Math.max(0,Math.floor(y-R)),y1=Math.min(H,Math.ceil(y+R));
+  for(let j=y0;j<y1;j++)for(let i=x0;i<x1;i++){
+    const dx=i-x,dy=j-y;if(dx*dx+dy*dy>R*R)continue;
+    const p=(j*W+i)*4;
+    if(tool==='erase')d[p+3]=0;
+    else{d[p]=o[p];d[p+1]=o[p+1];d[p+2]=o[p+2];d[p+3]=255}
+  }
+  render(x0,y0,x1,y1);
+}
+let drawing=false,last=null;
+function stroke(x,y,s){
+  if(last){const dx=x-last[0],dy=y-last[1],n=Math.ceil(Math.hypot(dx,dy)/3)||1;
+    for(let k=1;k<=n;k++)brush(last[0]+dx*k/n,last[1]+dy*k/n,s)}
+  else brush(x,y,s);
+  last=[x,y];
+}
+cv.addEventListener('pointerdown',e=>{
+  if(!orig||working)return;drawing=true;last=null;cv.setPointerCapture(e.pointerId);
+  const [x,y,s]=pos(e);stroke(x,y,s);hasResult=true;$('#dl').disabled=false;
+});
+cv.addEventListener('pointermove',e=>{if(drawing){const [x,y,s]=pos(e);stroke(x,y,s)}});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>{drawing=false;last=null}));
+
+document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{
+  tool=b.dataset.t;document.querySelectorAll('[data-t]').forEach(x=>x.classList.toggle('on',x===b));
+});
+$('#bsize').oninput=e=>$('#vb').textContent=e.target.value;
+$('#tol').oninput=e=>$('#vt').textContent=e.target.value;
+$('#feather').oninput=e=>$('#vf').textContent=e.target.value;
+$('#method').onchange=()=>{const ai=$('#method').value==='ai';$('#qwrap').classList.toggle('hide',!ai);$('#colopts').classList.toggle('hide',ai)};
+const ob=$('#orig');
+ob.addEventListener('pointerdown',()=>{if(orig){showOrig=true;render()}});
+['pointerup','pointerleave','pointercancel'].forEach(t=>ob.addEventListener(t,()=>{showOrig=false;if(orig)render()}));
+
+function setBg(v){
+  bg=v;const s=$('#stage');s.className='';
+  if(v==='white'||v==='black')s.classList.add(v);
+  else if(v){s.classList.add('custom');s.style.setProperty('--cb',v)}
+}
+document.querySelectorAll('[data-bg]').forEach(b=>b.onclick=()=>setBg(b.dataset.bg));
+$('#cc').oninput=e=>setBg(e.target.value);
+
+$('#dl').onclick=async()=>{
+  const t=document.createElement('canvas');t.width=W;t.height=H;
+  const c=t.getContext('2d');
+  const o=document.createElement('canvas');o.width=W;o.height=H;o.getContext('2d').putImageData(cur,0,0);
+  if(bg){c.fillStyle=bg;c.fillRect(0,0,W,H)}
+  c.drawImage(o,0,0);
+  const blob=await new Promise(r=>t.toBlob(r,'image/png'));
+  const fname=name+'-cutout.png';
+  try{
+    if(typeof claude!=='undefined'&&claude.use){
+      const dls=await claude.use('downloads');
+      if(dls){await dls.save({filename:fname,data:blob});return}
+    }
+  }catch(err){if(err&&err.code==='declined')return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;
+  document.body.appendChild(a);a.click();a.remove();
+};
+$('#new').onclick=()=>{$('#app').classList.add('hide');$('#drop').classList.remove('hide');$('#file').value='';msg('')};
+
+const drop=$('#drop'),fi=$('#file');
+drop.onclick=()=>fi.click();
+fi.onchange=()=>load(fi.files[0]);
+['dragover','dragenter'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>load(e.dataTransfer.files[0]));
+</script>
+</body>
+</html>
